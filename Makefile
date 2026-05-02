@@ -83,7 +83,16 @@ DTB = dtb
 VMLINUX = vmlinux
 ROOTFS_DIR = $(ROOTFS_PATH)/initramfs/disk
 ROOTFS_IMG = rootfs.img
+BUILDROOT_VERSION ?= 2026.02
+BUILDROOT_ARCHIVE ?= buildroot-$(BUILDROOT_VERSION).tar.xz
+BUILDROOT_SITE ?= https://buildroot.org/downloads
+BUILDROOT_URL ?= $(BUILDROOT_SITE)/$(BUILDROOT_ARCHIVE)
+BUILDROOT_TARBALL ?= $(TOPDIR)/$(BUILDROOT_ARCHIVE)
+BUILDROOT_DIR ?= $(TOPDIR)/buildroot-$(BUILDROOT_VERSION)
 BUILDROOT_OUTPUT ?= $(TOPDIR)/buildroot-output
+BUILDROOT_DEFCONFIG ?= $(TOPDIR)/buildroot-sp7021-nfs.defconfig
+BUILDROOT_DL_DIR ?= $(TOPDIR)/buildroot-dl
+BUILDROOT_SHA256 ?= d54b7ffece06ff28cbb81e28e3de74ea405ca6b77c38fbe8b18fa57bef585f8b
 BUILDROOT_ROOTFS_TAR ?= $(BUILDROOT_OUTPUT)/images/rootfs.tar
 BUILDROOT_ROOTFS_WORKDIR ?= $(OUT_PATH)/buildroot-rootfs
 FREERTOS_IMG = freertos.img
@@ -168,14 +177,14 @@ SPI_BIN = spi_all.bin
 DOWN_TOOL = down_32M.exe
 SECURE_PATH ?=
 
-.PHONY: all xboot uboot kenel rom clean distclean config init check rootfs buildroot-rootfs info firmware freertos toolchain
+.PHONY: all xboot uboot kenel rom clean distclean config init check toolchain rootfs buildroot-fetch buildroot-defconfig buildroot buildroot-rootfs info firmware freertos
 .PHONY: dtb spirom isp tool_isp kconfig uconfig xconfig
 
 # rootfs image is created by :
 # make initramfs -> re-create initial disk/
 # make kernel    -> install kernel modules to disk/lib/modules/
 # make rootfs    -> create rootfs image from disk/
-all: check
+all: check toolchain
 	@$(MAKE) xboot
 	@$(MAKE) dtb
 	@$(MAKE) uboot
@@ -308,7 +317,7 @@ distclean: clean
 	@$(RM) -f $(CONFIG_ROOT)
 	@$(RM) -f $(HW_CONFIG_ROOT)
 
-__config: hsm_init clean
+__config: hsm_init toolchain clean
 	@if [ -z $(HCONFIG) ]; then \
 		$(RM) -f $(HW_CONFIG_ROOT); \
 	fi
@@ -593,10 +602,6 @@ mt: check
 	@$(MAKE) rootfs rom
 
 init:
-	@if ! [ -f $(CROSS_COMPILE_FOR_LINUX) ]; then \
-		pwd; \
-		./build/dlgcc.sh; \
-	fi
 	@$(RM) -f $(CONFIG_ROOT)
 	@./build/config.sh $(CROSS_V7_COMPILE) $(CROSS_RISCV_COMPILE)
 
@@ -604,6 +609,12 @@ check:
 	@if ! [ -f $(CONFIG_ROOT) ]; then \
 		$(ECHO) $(COLOR_YELLOW)"Please \"make config\" first."$(COLOR_ORIGIN); \
 		exit 1; \
+	fi
+
+toolchain:
+	@if ! [ -x "$(CROSS_COMPILE_FOR_LINUX)gcc" ] || ! [ -x "$(CROSS_COMPILE_FOR_XBOOT)gcc" ]; then \
+		$(ECHO) $(COLOR_YELLOW)"Toolchain is missing; downloading vendor toolchains..."$(COLOR_ORIGIN); \
+		./build/dlgcc.sh; \
 	fi
 
 initramfs:
@@ -622,10 +633,41 @@ endif
 	FLASH_SIZE=$(FLASH_SIZE) NAND_PAGE_SIZE=$(NAND_PAGE_SIZE) NAND_PAGE_CNT=$(NAND_PAGE_CNT)
 endif
 
-buildroot-rootfs:
+buildroot-fetch:
+	@if [ ! -d "$(BUILDROOT_DIR)" ]; then \
+		if [ ! -f "$(BUILDROOT_TARBALL)" ]; then \
+			$(ECHO) $(COLOR_YELLOW)"Downloading $(BUILDROOT_URL)"$(COLOR_ORIGIN); \
+			if [ -x "$$(command -v wget)" ]; then \
+				wget -O "$(BUILDROOT_TARBALL)" "$(BUILDROOT_URL)"; \
+			elif [ -x "$$(command -v curl)" ]; then \
+				curl -L -o "$(BUILDROOT_TARBALL)" "$(BUILDROOT_URL)"; \
+			else \
+				$(ECHO) $(COLOR_YELLOW)"No wget or curl found. Please install one of them."$(COLOR_ORIGIN); \
+				exit 1; \
+			fi; \
+		fi; \
+		if [ -x "$$(command -v sha256sum)" ]; then \
+			printf '%s  %s\n' "$(BUILDROOT_SHA256)" "$(BUILDROOT_TARBALL)" | sha256sum -c -; \
+		else \
+			$(ECHO) $(COLOR_YELLOW)"sha256sum not found; skipping Buildroot archive checksum."$(COLOR_ORIGIN); \
+		fi; \
+		tar -C "$(TOPDIR)" -xf "$(BUILDROOT_TARBALL)"; \
+	fi
+
+buildroot-defconfig: buildroot-fetch
+	@if [ ! -f "$(BUILDROOT_DEFCONFIG)" ]; then \
+		$(ECHO) $(COLOR_YELLOW)"Buildroot defconfig doesn't exist: $(BUILDROOT_DEFCONFIG)"$(COLOR_ORIGIN); \
+		exit 1; \
+	fi
+	@$(MAKE) -C "$(BUILDROOT_DIR)" O="$(BUILDROOT_OUTPUT)" BR2_DEFCONFIG="$(BUILDROOT_DEFCONFIG)" defconfig
+
+buildroot: buildroot-defconfig
+	@$(MAKE) -C "$(BUILDROOT_DIR)" O="$(BUILDROOT_OUTPUT)" BR2_DL_DIR="$(BUILDROOT_DL_DIR)"
+
+buildroot-rootfs: buildroot
 	@if [ ! -f "$(BUILDROOT_ROOTFS_TAR)" ]; then \
 		$(ECHO) $(COLOR_YELLOW)"Buildroot rootfs tar doesn't exist: $(BUILDROOT_ROOTFS_TAR)"$(COLOR_ORIGIN); \
-		$(ECHO) $(COLOR_YELLOW)"Build Buildroot first or set BUILDROOT_ROOTFS_TAR=/path/to/rootfs.tar."$(COLOR_ORIGIN); \
+		$(ECHO) $(COLOR_YELLOW)"Set BUILDROOT_ROOTFS_TAR=/path/to/rootfs.tar or check the Buildroot build log."$(COLOR_ORIGIN); \
 		exit 1; \
 	fi
 	@$(MKDIR) -p $(OUT_PATH) $(ROOTFS_PATH)
