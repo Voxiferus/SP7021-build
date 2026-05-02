@@ -127,26 +127,35 @@ dd if="$FAT_IMG_OUT" of="$OUT_FILE" bs="$seek_bs" seek="$seek_offset"
 rm -f "$FAT_IMG_OUT"
 
 # Create root partition (ext4)
-# Copy 'rc.sdcardboot' to '/etc/init.d' of root partition.
-cp -rf "$RC_SDCARDBOOTFILE" $RC_SDCARDBOOTDIR
+if [ "$ROOTFS_CONTENT" = "BUILDROOT" ]; then
+	if [ ! -f "$ROOT_IMG" ]; then
+		echo "Error: Buildroot root image doesn't exist: $ROOT_IMG"
+		echo "Run 'make rootfs' first or provide out/rootfs.img."
+		exit 1
+	fi
+	echo "Use existing Buildroot rootfs image: $ROOT_IMG"
+else
+	# Copy 'rc.sdcardboot' to '/etc/init.d' of root partition.
+	cp -rf "$RC_SDCARDBOOTFILE" $RC_SDCARDBOOTDIR
 
-# Calculate size of root partition (assume 40% + 20MB overhead).
-sz=`du -sb $ROOT_DIR_IN | cut -f1`
-sz=$((sz*14/10))
-partition_size_2=$((sz/1024/1024+20))
+	# Calculate size of root partition (assume 40% + 20MB overhead).
+	sz=`du -sb $ROOT_DIR_IN | cut -f1`
+	sz=$((sz*14/10))
+	partition_size_2=$((sz/1024/1024+20))
 
-echo '###### do mke2fs cmd (mke2fs version needs to bigger than 1.45.1) ########'
-chmod 777 $ROOT_DIR_IN/bin/busybox
-rm -f "$ROOT_IMG"
-$FAKEROOT /bin/bash -c "./setting_attr.py $ROOT_DIR_IN ${TMP_DIR}/attr.list; mke2fs -t ext4 -b 4096 -d $ROOT_DIR_IN $ROOT_IMG $((partition_size_2))M"
-if [ $? -ne 0 ]; then
-	exit
+	echo '###### do mke2fs cmd (mke2fs version needs to bigger than 1.45.1) ########'
+	chmod 777 $ROOT_DIR_IN/bin/busybox
+	rm -f "$ROOT_IMG"
+	$FAKEROOT /bin/bash -c "./setting_attr.py $ROOT_DIR_IN ${TMP_DIR}/attr.list; mke2fs -t ext4 -b 4096 -d $ROOT_DIR_IN $ROOT_IMG $((partition_size_2))M"
+	if [ $? -ne 0 ]; then
+		exit
+	fi
+
+	# Resize to minimum + 10%. resize2fs version needs to bigger than 1.45.1.
+	partition_sz_2=`$RESIZE -P $ROOT_IMG | cut -d: -f2`
+	partition_sz_2=$((partition_sz_2*11/10+1))
+	$RESIZE $ROOT_IMG $partition_sz_2
 fi
-
-# Resize to minimum + 10%. resize2fs version needs to bigger than 1.45.1.
-partition_sz_2=`$RESIZE -P $ROOT_IMG | cut -d: -f2`
-partition_sz_2=$((partition_sz_2*11/10+1))
-$RESIZE $ROOT_IMG $partition_sz_2
 
 # Offset root partition (ext4)
 dd if="$ROOT_IMG" of="$OUT_FILE" bs="$seek_bs" seek="$(($seek_offset+$partition_size_1/$seek_bs))"

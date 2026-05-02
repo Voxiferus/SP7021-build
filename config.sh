@@ -889,6 +889,9 @@ list_config()
 		$ECHO $COLOR_YELLOW"[1] BusyBox"$COLOR_ORIGIN
 		$ECHO $COLOR_YELLOW"[2] Yocto"$COLOR_ORIGIN
 		$ECHO $COLOR_YELLOW"[3] Ubuntu Server 20.04"$COLOR_ORIGIN
+		if [ "$board" = "2" -o "$board" = "7" ]; then
+			$ECHO $COLOR_YELLOW"[4] Buildroot"$COLOR_ORIGIN
+		fi
 		read sel
 		case "$sel" in
 		"2")
@@ -896,6 +899,14 @@ list_config()
 			;;
 		"3")
 			rootfs_content=ubuntu-server-20.04
+			;;
+		"4")
+			if [ "$board" = "2" -o "$board" = "7" ]; then
+				rootfs_content=BUILDROOT
+			else
+				echo "Error: Buildroot rootfs is supported only for LTPP3G2 boards!"
+				exit 1
+			fi
 			;;
 		*)
 			sel=1

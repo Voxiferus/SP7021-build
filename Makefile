@@ -83,6 +83,9 @@ DTB = dtb
 VMLINUX = vmlinux
 ROOTFS_DIR = $(ROOTFS_PATH)/initramfs/disk
 ROOTFS_IMG = rootfs.img
+BUILDROOT_OUTPUT ?= $(TOPDIR)/buildroot-output
+BUILDROOT_ROOTFS_TAR ?= $(BUILDROOT_OUTPUT)/images/rootfs.tar
+BUILDROOT_ROOTFS_WORKDIR ?= $(OUT_PATH)/buildroot-rootfs
 FREERTOS_IMG = freertos.img
 
 CROSS_COMPILE_FOR_XBOOT =$(CROSS_V5_COMPILE)
@@ -165,7 +168,7 @@ SPI_BIN = spi_all.bin
 DOWN_TOOL = down_32M.exe
 SECURE_PATH ?=
 
-.PHONY: all xboot uboot kenel rom clean distclean config init check rootfs info firmware freertos toolchain
+.PHONY: all xboot uboot kenel rom clean distclean config init check rootfs buildroot-rootfs info firmware freertos toolchain
 .PHONY: dtb spirom isp tool_isp kconfig uconfig xconfig
 
 # rootfs image is created by :
@@ -192,7 +195,11 @@ firmware:
 		$(ECHO) "[arduino] make $(CHIP) firmware" ;\
 		$(MAKE) -C $(FIRMWARE_PATH) CHIP=$(CHIP) ;\
 		$(CHMOD) -x $(FIRMWARE_PATH)/bin/firmware ;\
-		$(CP) $(FIRMWARE_PATH)/bin/firmware linux/rootfs/initramfs/disk/lib/firmware ;\
+		if [ "$(ROOTFS_CONTENT)" != "BUILDROOT" ]; then \
+			$(CP) $(FIRMWARE_PATH)/bin/firmware linux/rootfs/initramfs/disk/lib/firmware ;\
+		else \
+			$(ECHO) $(COLOR_YELLOW)"Skip installing firmware into vendor rootfs for Buildroot rootfs."$(COLOR_ORIGIN); \
+		fi; \
 	else \
 		$(MAKE) -C freertos CROSS_COMPILE=$(CROSS_COMPILE_FOR_XBOOT); \
 		if [ "$(NEED_ISP)" = '1' ]; then \
@@ -460,7 +467,9 @@ isp: check tool_isp
 		exit 1; \
 	fi
 	@if [ "$(BOOT_FROM)" != "SDCARD" ] && [ "$(BOOT_FROM)" != "USB" ]; then  \
-		if [ -f $(ROOTFS_PATH)/$(ROOTFS_IMG) ]; then \
+		if [ "$(ROOTFS_CONTENT)" = "BUILDROOT" ] && [ -f $(OUT_PATH)/$(ROOTFS_IMG) ]; then \
+			$(ECHO) $(COLOR_YELLOW)"Use Buildroot "$(ROOTFS_IMG)" from out folder."$(COLOR_ORIGIN); \
+		elif [ -f $(ROOTFS_PATH)/$(ROOTFS_IMG) ]; then \
 			$(ECHO) $(COLOR_YELLOW)"Copy "$(ROOTFS_IMG)" to out folder."$(COLOR_ORIGIN); \
 			$(CP) -vf $(ROOTFS_PATH)/$(ROOTFS_IMG) $(OUT_PATH)/ ;\
 		else \
@@ -472,7 +481,7 @@ isp: check tool_isp
 
 	@if [ "$(BOOT_FROM)" = "SDCARD" ]; then  \
 		$(ECHO) $(COLOR_YELLOW) "Generating image for SD card..." $(COLOR_ORIGIN); \
-		cd build/tools/sdcard_boot; ./$(SDCARD_BOOT_SHELL) $(SDCARD_BOOT_MODE); \
+		cd build/tools/sdcard_boot; ROOTFS_CONTENT=$(ROOTFS_CONTENT) ./$(SDCARD_BOOT_SHELL) $(SDCARD_BOOT_MODE); \
 	fi
 
 part:
@@ -601,6 +610,9 @@ initramfs:
 	@$(MAKE_ARCH) -C $(ROOTFS_PATH) CROSS=$(CROSS_COMPILE_FOR_ROOTFS) initramfs rootfs_cfg=$(ROOTFS_CONFIG) boot_from=$(BOOT_FROM) ROOTFS_CONTENT=$(ROOTFS_CONTENT)
 
 rootfs:
+ifeq ($(ROOTFS_CONTENT),BUILDROOT)
+	@$(MAKE) buildroot-rootfs
+else
 ifneq ($(CHIP),Q645)
 	$(RM) -f $(ROOTFS_DIR)/lib/firmware/ethosn.bin
 	$(RM) -f $(ROOTFS_DIR)/lib64/libEthosNDriver.so
@@ -608,6 +620,17 @@ ifneq ($(CHIP),Q645)
 endif
 	@$(MAKE_ARCH) -C $(ROOTFS_PATH) CROSS=$(CROSS_COMPILE_FOR_ROOTFS) rootfs rootfs_cfg=$(ROOTFS_CONFIG) boot_from=$(BOOT_FROM) ROOTFS_CONTENT=$(ROOTFS_CONTENT) \
 	FLASH_SIZE=$(FLASH_SIZE) NAND_PAGE_SIZE=$(NAND_PAGE_SIZE) NAND_PAGE_CNT=$(NAND_PAGE_CNT)
+endif
+
+buildroot-rootfs:
+	@if [ ! -f "$(BUILDROOT_ROOTFS_TAR)" ]; then \
+		$(ECHO) $(COLOR_YELLOW)"Buildroot rootfs tar doesn't exist: $(BUILDROOT_ROOTFS_TAR)"$(COLOR_ORIGIN); \
+		$(ECHO) $(COLOR_YELLOW)"Build Buildroot first or set BUILDROOT_ROOTFS_TAR=/path/to/rootfs.tar."$(COLOR_ORIGIN); \
+		exit 1; \
+	fi
+	@$(MKDIR) -p $(OUT_PATH) $(ROOTFS_PATH)
+	@fakeroot -- /bin/bash $(BUILD_PATH)/tools/buildroot_rootfs_img.sh "$(BUILDROOT_ROOTFS_TAR)" "$(OUT_PATH)/$(ROOTFS_IMG)" "$(BUILDROOT_ROOTFS_WORKDIR)"
+	@$(CP) -vf "$(OUT_PATH)/$(ROOTFS_IMG)" "$(ROOTFS_PATH)/$(ROOTFS_IMG)"
 
 kconfig:
 	$(MAKE_ARCH) -C $(LINUX_PATH) CROSS_COMPILE=$(CROSS_COMPILE_FOR_LINUX) menuconfig
